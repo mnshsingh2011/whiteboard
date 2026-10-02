@@ -8,6 +8,8 @@ const TOOLS = [
   ['hand', '✋ Pan'],
   ['rect', '▭ Rectangle'],
   ['ellipse', '◯ Ellipse'],
+  ['arrow', '↗ Arrow'],
+  ['pen', '✎ Pen'],
 ];
 const COLORS = ['#1c2330', '#ef4444', '#3b82f6', '#22c55e', '#f59e0b'];
 
