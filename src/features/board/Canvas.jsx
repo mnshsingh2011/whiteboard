@@ -1,9 +1,12 @@
-import { useRef, useEffect, useCallback } from 'react';
+import { useRef, useState, useEffect, useCallback } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 import { addShape, updateShape, select } from './boardSlice';
 import { selectShapes } from './selectors';
 import { drawScene } from '../../utils/draw';
 import { toWorld, hitTest } from '../../utils/geometry';
+
+const MIN_SCALE = 0.2;
+const MAX_SCALE = 5;
 
 export default function Canvas() {
   const dispatch = useDispatch();
@@ -13,12 +16,13 @@ export default function Canvas() {
   const color = useSelector((s) => s.ui.color);
 
   const canvasRef = useRef(null);
-  const view = useRef({ x: 0, y: 0, scale: 1 }); // pan/zoom (used from Week 2)
-  const draft = useRef(null);                    // shape being drawn or moved
-  const drag = useRef(null);                     // info about the current gesture
+  const view = useRef({ x: 0, y: 0, scale: 1 });
+  const draft = useRef(null);
+  const drag = useRef(null);
   const raf = useRef(0);
+  const spaceDown = useRef(false);
+  const [zoom, setZoom] = useState(100); // only for the badge; changes rarely
 
-  // Batch redraws: many events in one frame lead to one paint
   const redraw = useCallback(() => {
     cancelAnimationFrame(raf.current);
     raf.current = requestAnimationFrame(() =>
@@ -31,7 +35,6 @@ export default function Canvas() {
     return () => cancelAnimationFrame(raf.current);
   }, [redraw]);
 
-  // Keep the canvas pixel size in sync with its container
   useEffect(() => {
     const c = canvasRef.current;
     const dpr = window.devicePixelRatio || 1;
@@ -44,10 +47,74 @@ export default function Canvas() {
     return () => ro.disconnect();
   }, [redraw]);
 
+  // Wheel zoom. Added manually because React's onWheel is passive,
+  // and we need preventDefault() to stop the page from scrolling.
+  useEffect(() => {
+    const c = canvasRef.current;
+    const onWheel = (e) => {
+      e.preventDefault();
+      const r = c.getBoundingClientRect();
+      const mx = e.clientX - r.left;
+      const my = e.clientY - r.top;
+      const v = view.current;
+
+      const next = Math.min(MAX_SCALE, Math.max(MIN_SCALE, v.scale * Math.exp(-e.deltaY * 0.0015)));
+      const k = next / v.scale;
+
+      // Keep the board point under the cursor fixed while scaling
+      v.x = mx - (mx - v.x) * k;
+      v.y = my - (my - v.y) * k;
+      v.scale = next;
+
+      setZoom(Math.round(next * 100)); // same value = no re-render
+      redraw();
+    };
+    c.addEventListener('wheel', onWheel, { passive: false });
+    return () => c.removeEventListener('wheel', onWheel);
+  }, [redraw]);
+
+  // Track the Space key (hold Space and drag to pan)
+  useEffect(() => {
+    const isTyping = (e) => ['INPUT', 'TEXTAREA'].includes(e.target.tagName);
+    const down = (e) => {
+      if (e.code === 'Space' && !isTyping(e)) {
+        e.preventDefault();
+        spaceDown.current = true;
+      }
+    };
+    const up = (e) => { if (e.code === 'Space') spaceDown.current = false; };
+    const blur = () => { spaceDown.current = false; };
+    window.addEventListener('keydown', down);
+    window.addEventListener('keyup', up);
+    window.addEventListener('blur', blur);
+    return () => {
+      window.removeEventListener('keydown', down);
+      window.removeEventListener('keyup', up);
+      window.removeEventListener('blur', blur);
+    };
+  }, []);
+
+  const resetView = useCallback(() => {
+    view.current = { x: 0, y: 0, scale: 1 };
+    setZoom(100);
+    redraw();
+  }, [redraw]);
+
   const onPointerDown = useCallback((e) => {
     e.currentTarget.setPointerCapture(e.pointerId);
-    const p = toWorld(e, canvasRef.current, view.current);
 
+    // Pan: Hand tool, Space held, or middle mouse button
+    if (tool === 'hand' || spaceDown.current || e.button === 1) {
+      e.preventDefault();
+      drag.current = {
+        pan: true,
+        sx: e.clientX, sy: e.clientY,
+        vx: view.current.x, vy: view.current.y,
+      };
+      return;
+    }
+
+    const p = toWorld(e, canvasRef.current, view.current);
     if (tool === 'select') {
       const hit = hitTest(shapes, p);
       dispatch(select(hit ? hit.id : null));
@@ -63,21 +130,32 @@ export default function Canvas() {
   }, [tool, color, shapes, dispatch, redraw]);
 
   const onPointerMove = useCallback((e) => {
-    if (!drag.current) return;
+    const g = drag.current;
+    if (!g) return;
+
+    if (g.pan) {
+      view.current.x = g.vx + e.clientX - g.sx;
+      view.current.y = g.vy + e.clientY - g.sy;
+      redraw();
+      return;
+    }
+
     const p = toWorld(e, canvasRef.current, view.current);
-    const { start, orig } = drag.current;
-    draft.current = orig
-      ? { ...orig, x: orig.x + p.x - start.x, y: orig.y + p.y - start.y }
-      : { ...draft.current, w: p.x - start.x, h: p.y - start.y };
+    draft.current = g.orig
+      ? { ...g.orig, x: g.orig.x + p.x - g.start.x, y: g.orig.y + p.y - g.start.y }
+      : { ...draft.current, w: p.x - g.start.x, h: p.y - g.start.y };
     redraw();
   }, [redraw]);
 
   const onPointerUp = useCallback(() => {
-    const d = draft.current;
     const g = drag.current;
+    if (g?.pan) {
+      drag.current = null;
+      return;
+    }
+    const d = draft.current;
     if (d && g) {
       if (g.orig) {
-        // Only create a history step if the shape actually moved
         if (d.x !== g.orig.x || d.y !== g.orig.y) {
           dispatch(updateShape({ id: d.id, changes: { x: d.x, y: d.y } }));
         }
@@ -91,18 +169,30 @@ export default function Canvas() {
   }, [dispatch, redraw]);
 
   return (
-    <canvas
-      ref={canvasRef}
-      style={{
-        width: '100%',
-        height: '100%',
-        display: 'block',
-        touchAction: 'none',
-        cursor: tool === 'select' ? 'default' : 'crosshair',
-      }}
-      onPointerDown={onPointerDown}
-      onPointerMove={onPointerMove}
-      onPointerUp={onPointerUp}
-    />
+    <>
+      <canvas
+        ref={canvasRef}
+        style={{
+          width: '100%',
+          height: '100%',
+          display: 'block',
+          touchAction: 'none',
+          cursor: tool === 'hand' ? 'grab' : tool === 'select' ? 'default' : 'crosshair',
+        }}
+        onPointerDown={onPointerDown}
+        onPointerMove={onPointerMove}
+        onPointerUp={onPointerUp}
+      />
+      <button
+        onClick={resetView}
+        title="Reset view"
+        style={{
+          position: 'absolute', left: 12, bottom: 12, zIndex: 1,
+          background: '#fff', border: '1px solid #ddd', borderRadius: 8, padding: '6px 10px',
+        }}
+      >
+        {zoom}%
+      </button>
+    </>
   );
 }

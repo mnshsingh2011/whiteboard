@@ -3,7 +3,7 @@ import { useDispatch } from 'react-redux';
 import { undo, redo, deleteSelected } from '../features/board/boardSlice';
 import { setTool } from '../features/ui/uiSlice';
 
-const TOOL_KEYS = { v: 'select', r: 'rect', o: 'ellipse' };
+const TOOL_KEYS = { v: 'select', h: 'hand', r: 'rect', o: 'ellipse' };
 
 export function useHotkeys() {
   const dispatch = useDispatch();

@@ -5,6 +5,7 @@ import { undo, redo, deleteSelected } from './boardSlice';
 
 const TOOLS = [
   ['select', '↖ Select'],
+  ['hand', '✋ Pan'],
   ['rect', '▭ Rectangle'],
   ['ellipse', '◯ Ellipse'],
 ];
