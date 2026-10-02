@@ -1,9 +1,9 @@
 import { lazy, Suspense } from 'react';
 import { createBrowserRouter } from 'react-router-dom';
-import Home from '../pages/Home';
-import NotFound from '../pages/NotFound';
+import Home from '../page/Home';
+import NotFound from '../page/NotFound';
 
-const BoardPage = lazy(() => import('../pages/BoardPage'));
+const BoardPage = lazy(() => import('../page/BoardPage'));
 
 export const router = createBrowserRouter([
   { path: '/', element: <Home /> },
